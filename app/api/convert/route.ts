@@ -180,7 +180,7 @@ function escapeICSValue(value: string): string {
     .replace(/\n/g, '\\n');
 }
 
-function generateCalendar(events: ScheduleEvent[], format: 'outlook' | 'apple'): string {
+function generateCalendar(events: ScheduleEvent[], format: 'outlook' | 'apple', repeatWeekly?: boolean, repeatWeeks?: number): string {
   // Generate ICS file manually with floating times (no timezone)
   let ics = 'BEGIN:VCALENDAR\r\n';
   ics += 'VERSION:2.0\r\n';
@@ -206,6 +206,13 @@ function generateCalendar(events: ScheduleEvent[], format: 'outlook' | 'apple'):
     if (location) {
       ics += `LOCATION:${location}\r\n`;
     }
+    
+    // Add recurrence rule if weekly repeat is enabled
+    if (repeatWeekly && repeatWeeks && repeatWeeks > 0) {
+      // RRULE:FREQ=WEEKLY;COUNT=X - repeats weekly for the specified number of occurrences
+      ics += `RRULE:FREQ=WEEKLY;COUNT=${repeatWeeks}\r\n`;
+    }
+    
     ics += 'END:VEVENT\r\n';
   });
   
@@ -225,6 +232,8 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const images = formData.getAll('images') as File[];
     const format = formData.get('format') as 'outlook' | 'apple';
+    const repeatWeekly = formData.get('repeatWeekly') === 'true';
+    const repeatWeeks = repeatWeekly ? parseInt(formData.get('repeatWeeks') as string) || 4 : undefined;
     
     if (!images || images.length === 0) {
       return NextResponse.json({ error: 'No images provided' }, { status: 400 });
@@ -232,6 +241,10 @@ export async function POST(request: NextRequest) {
     
     if (!format || (format !== 'outlook' && format !== 'apple')) {
       return NextResponse.json({ error: 'Invalid format. Must be "outlook" or "apple"' }, { status: 400 });
+    }
+    
+    if (repeatWeekly && (repeatWeeks === undefined || repeatWeeks < 1 || repeatWeeks > 52)) {
+      return NextResponse.json({ error: 'Invalid repeat weeks. Must be between 1 and 52' }, { status: 400 });
     }
     
     // Process all images and collect events
@@ -269,7 +282,7 @@ export async function POST(request: NextRequest) {
     uniqueEvents.sort((a, b) => a.start.getTime() - b.start.getTime());
     
     // Generate calendar file with all events
-    const calendarContent = generateCalendar(uniqueEvents, format);
+    const calendarContent = generateCalendar(uniqueEvents, format, repeatWeekly, repeatWeeks);
     
     return new NextResponse(calendarContent, {
       status: 200,
