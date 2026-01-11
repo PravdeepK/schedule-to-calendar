@@ -97,7 +97,7 @@ async function processImage(file: File): Promise<ScheduleEvent[]> {
         content: [
           {
             type: 'text',
-            text: `Analyze this work schedule image and extract all scheduled shifts/events. Return a JSON object with an "events" array containing events in this exact format:
+            text: `Analyze this work schedule image and extract all scheduled work shifts/events. Return a JSON object with an "events" array containing events in this exact format:
 
 {
   "events": [
@@ -116,8 +116,9 @@ Important:
 - Extract times exactly as shown in the schedule (12-hour or 24-hour format) and convert to ISO 8601 format WITHOUT timezone (format: YYYY-MM-DDTHH:MM:SS).
 - Times should be treated as local time - do NOT add timezone information.
 - For 12-hour format with AM/PM, convert correctly (e.g., 3:00 PM = 15:00, 3:00 AM = 03:00).
-- Include all work shifts, time-off requests, and scheduled events.
-- For time-off or approved requests, set appropriate start/end times.
+- ONLY include actual work shifts, coverage, tasks, and scheduled work events.
+- DO NOT include time-off requests, approved time-off, vacation days, or any non-work events.
+- Only extract shifts that have specific start and end times (work hours).
 - Return ONLY valid JSON in the format above, no markdown, no code blocks, just the JSON object.`
           },
           {
