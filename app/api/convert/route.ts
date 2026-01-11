@@ -180,7 +180,15 @@ function escapeICSValue(value: string): string {
     .replace(/\n/g, '\\n');
 }
 
-function generateCalendar(events: ScheduleEvent[], format: 'outlook' | 'apple', repeatWeekly?: boolean, repeatWeeks?: number): string {
+function formatICSDate(date: Date): string {
+  // Format as YYYYMMDD (date only, for UNTIL in RRULE)
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}${month}${day}`;
+}
+
+function generateCalendar(events: ScheduleEvent[], format: 'outlook' | 'apple', repeatWeekly?: boolean, repeatMode?: 'weeks' | 'date', repeatWeeks?: number, repeatUntilDate?: string): string {
   // Generate ICS file manually with floating times (no timezone)
   let ics = 'BEGIN:VCALENDAR\r\n';
   ics += 'VERSION:2.0\r\n';
@@ -208,9 +216,17 @@ function generateCalendar(events: ScheduleEvent[], format: 'outlook' | 'apple', 
     }
     
     // Add recurrence rule if weekly repeat is enabled
-    if (repeatWeekly && repeatWeeks && repeatWeeks > 0) {
-      // RRULE:FREQ=WEEKLY;COUNT=X - repeats weekly for the specified number of occurrences
-      ics += `RRULE:FREQ=WEEKLY;COUNT=${repeatWeeks}\r\n`;
+    if (repeatWeekly) {
+      if (repeatMode === 'weeks' && repeatWeeks && repeatWeeks > 0) {
+        // RRULE:FREQ=WEEKLY;COUNT=X - repeats weekly for the specified number of occurrences
+        ics += `RRULE:FREQ=WEEKLY;COUNT=${repeatWeeks}\r\n`;
+      } else if (repeatMode === 'date' && repeatUntilDate) {
+        // Parse the end date and format it for UNTIL
+        const untilDate = new Date(repeatUntilDate + 'T23:59:59');
+        const untilDateStr = formatICSDate(untilDate);
+        // RRULE:FREQ=WEEKLY;UNTIL=YYYYMMDD - repeats weekly until the specified date
+        ics += `RRULE:FREQ=WEEKLY;UNTIL=${untilDateStr}\r\n`;
+      }
     }
     
     ics += 'END:VEVENT\r\n';
@@ -233,7 +249,9 @@ export async function POST(request: NextRequest) {
     const images = formData.getAll('images') as File[];
     const format = formData.get('format') as 'outlook' | 'apple';
     const repeatWeekly = formData.get('repeatWeekly') === 'true';
-    const repeatWeeks = repeatWeekly ? parseInt(formData.get('repeatWeeks') as string) || 4 : undefined;
+    const repeatMode = (formData.get('repeatMode') as 'weeks' | 'date') || 'weeks';
+    const repeatWeeks = repeatWeekly && repeatMode === 'weeks' ? parseInt(formData.get('repeatWeeks') as string) || 4 : undefined;
+    const repeatUntilDate = repeatWeekly && repeatMode === 'date' ? formData.get('repeatUntilDate') as string : undefined;
     
     if (!images || images.length === 0) {
       return NextResponse.json({ error: 'No images provided' }, { status: 400 });
@@ -243,8 +261,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid format. Must be "outlook" or "apple"' }, { status: 400 });
     }
     
-    if (repeatWeekly && (repeatWeeks === undefined || repeatWeeks < 1 || repeatWeeks > 52)) {
-      return NextResponse.json({ error: 'Invalid repeat weeks. Must be between 1 and 52' }, { status: 400 });
+    if (repeatWeekly) {
+      if (repeatMode === 'weeks' && (repeatWeeks === undefined || repeatWeeks < 1 || repeatWeeks > 52)) {
+        return NextResponse.json({ error: 'Invalid repeat weeks. Must be between 1 and 52' }, { status: 400 });
+      }
+      if (repeatMode === 'date' && !repeatUntilDate) {
+        return NextResponse.json({ error: 'Repeat until date is required when repeat mode is set to date' }, { status: 400 });
+      }
+      if (repeatMode === 'date' && repeatUntilDate) {
+        const endDate = new Date(repeatUntilDate);
+        if (isNaN(endDate.getTime())) {
+          return NextResponse.json({ error: 'Invalid repeat until date format' }, { status: 400 });
+        }
+      }
     }
     
     // Process all images and collect events
@@ -282,7 +311,7 @@ export async function POST(request: NextRequest) {
     uniqueEvents.sort((a, b) => a.start.getTime() - b.start.getTime());
     
     // Generate calendar file with all events
-    const calendarContent = generateCalendar(uniqueEvents, format, repeatWeekly, repeatWeeks);
+    const calendarContent = generateCalendar(uniqueEvents, format, repeatWeekly, repeatMode, repeatWeeks, repeatUntilDate);
     
     return new NextResponse(calendarContent, {
       status: 200,

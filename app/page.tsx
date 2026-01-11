@@ -16,7 +16,9 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [repeatWeekly, setRepeatWeekly] = useState(false);
+  const [repeatMode, setRepeatMode] = useState<'weeks' | 'date'>('weeks');
   const [repeatWeeks, setRepeatWeeks] = useState<number>(4);
+  const [repeatUntilDate, setRepeatUntilDate] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -100,7 +102,12 @@ export default function Home() {
       formData.append('format', format);
       if (repeatWeekly) {
         formData.append('repeatWeekly', 'true');
-        formData.append('repeatWeeks', repeatWeeks.toString());
+        formData.append('repeatMode', repeatMode);
+        if (repeatMode === 'weeks') {
+          formData.append('repeatWeeks', repeatWeeks.toString());
+        } else if (repeatMode === 'date' && repeatUntilDate) {
+          formData.append('repeatUntilDate', repeatUntilDate);
+        }
       }
 
       setProcessingProgress(20);
@@ -318,31 +325,81 @@ export default function Home() {
                 </label>
                 
                 {repeatWeekly && (
-                  <div className="ml-8 space-y-2">
-                    <label className="block text-sm text-gray-600 dark:text-gray-400">
-                      Repeat for:
-                    </label>
-                    <div className="flex items-center space-x-3">
-                      <input
-                        type="number"
-                        min="1"
-                        max="52"
-                        value={repeatWeeks}
-                        onChange={(e) => {
-                          const value = parseInt(e.target.value);
-                          if (!isNaN(value) && value > 0) {
-                            setRepeatWeeks(Math.min(52, Math.max(1, value)));
-                          }
-                        }}
-                        className="w-20 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      />
-                      <span className="text-sm text-gray-600 dark:text-gray-400">
-                        weeks
-                      </span>
+                  <div className="ml-8 space-y-4">
+                    {/* Repeat Mode Selection */}
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <label className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="repeatMode"
+                          value="weeks"
+                          checked={repeatMode === 'weeks'}
+                          onChange={(e) => setRepeatMode(e.target.value as 'weeks' | 'date')}
+                          className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500 cursor-pointer"
+                        />
+                        <span className="text-sm text-gray-700 dark:text-gray-300">Repeat for number of weeks</span>
+                      </label>
+                      <label className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="repeatMode"
+                          value="date"
+                          checked={repeatMode === 'date'}
+                          onChange={(e) => setRepeatMode(e.target.value as 'weeks' | 'date')}
+                          className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500 cursor-pointer"
+                        />
+                        <span className="text-sm text-gray-700 dark:text-gray-300">Repeat until date</span>
+                      </label>
                     </div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      Events will repeat every week for the specified number of weeks
-                    </p>
+                    
+                    {/* Weeks Input */}
+                    {repeatMode === 'weeks' && (
+                      <div className="space-y-2">
+                        <label className="block text-sm text-gray-600 dark:text-gray-400">
+                          Repeat for:
+                        </label>
+                        <div className="flex items-center space-x-3">
+                          <input
+                            type="number"
+                            min="1"
+                            max="52"
+                            value={repeatWeeks}
+                            onChange={(e) => {
+                              const value = parseInt(e.target.value);
+                              if (!isNaN(value) && value > 0) {
+                                setRepeatWeeks(Math.min(52, Math.max(1, value)));
+                              }
+                            }}
+                            className="w-20 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                          <span className="text-sm text-gray-600 dark:text-gray-400">
+                            weeks
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Events will repeat every week for the specified number of weeks
+                        </p>
+                      </div>
+                    )}
+                    
+                    {/* End Date Input */}
+                    {repeatMode === 'date' && (
+                      <div className="space-y-2">
+                        <label className="block text-sm text-gray-600 dark:text-gray-400">
+                          Repeat until:
+                        </label>
+                        <input
+                          type="date"
+                          value={repeatUntilDate}
+                          onChange={(e) => setRepeatUntilDate(e.target.value)}
+                          min={new Date().toISOString().split('T')[0]}
+                          className="w-full sm:w-auto px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Events will repeat every week until the selected date
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
