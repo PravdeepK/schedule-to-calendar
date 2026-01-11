@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 interface FileWithPreview {
   file: File;
@@ -10,11 +10,29 @@ interface FileWithPreview {
 
 export default function Home() {
   const [selectedFiles, setSelectedFiles] = useState<FileWithPreview[]>([]);
-  const [format, setFormat] = useState<'outlook' | 'apple'>('outlook');
+  const [format, setFormat] = useState<'outlook' | 'apple'>('apple');
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // Detect if user is on mobile
+    const checkMobile = () => {
+      const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || 
+                            (typeof window !== 'undefined' && window.innerWidth < 768);
+      setIsMobile(isMobileDevice);
+      // On mobile, force Apple Calendar format
+      if (isMobileDevice) {
+        setFormat('apple');
+      }
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   const handleFilesSelect = (files: FileList | File[]) => {
     const fileArray = Array.from(files);
@@ -238,53 +256,45 @@ export default function Home() {
 
               {/* Format Selection */}
               <div className="space-y-3 sm:space-y-4">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Select Calendar Format:
-                </label>
-                <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                  <button
-                    onClick={() => setFormat('outlook')}
-                    className={`p-3 sm:p-4 rounded-lg border-2 transition-all touch-manipulation min-h-[80px] ${
-                      format === 'outlook'
-                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-400'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 active:border-gray-400'
-                    }`}
-                  >
-                    <div className="flex items-center justify-center space-x-3">
-                      <svg
-                        className="w-8 h-8"
-                        fill="currentColor"
-                        viewBox="0 0 24 24"
+                {isMobile ? (
+                  <>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Calendar Format:
+                    </label>
+                    <div className="grid grid-cols-1 gap-3 sm:gap-4">
+                      <button
+                        className="p-3 sm:p-4 rounded-lg border-2 border-blue-500 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-400 touch-manipulation min-h-[80px] cursor-default"
+                        disabled
                       >
-                        <path d="M7.5 21H2V9h5.5v12zm7.25-18h-5.5C8.57 3 7.5 4.57 7.5 6.75V21H13V9.75h2.25V21h3.75V9.75h2.25V21H22V9.75C22 7.57 20.93 3 16.75 3z" />
-                      </svg>
-                      <span className="font-medium text-gray-900 dark:text-white">
-                        Outlook
-                      </span>
+                        <div className="flex items-center justify-center space-x-3">
+                          <svg
+                            className="w-8 h-8"
+                            fill="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" />
+                          </svg>
+                          <span className="font-medium text-gray-900 dark:text-white">
+                            Apple Calendar
+                          </span>
+                        </div>
+                      </button>
                     </div>
-                  </button>
-                  <button
-                    onClick={() => setFormat('apple')}
-                    className={`p-3 sm:p-4 rounded-lg border-2 transition-all touch-manipulation min-h-[80px] ${
-                      format === 'apple'
-                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-400'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 active:border-gray-400'
-                    }`}
-                  >
-                    <div className="flex items-center justify-center space-x-3">
-                      <svg
-                        className="w-8 h-8"
-                        fill="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" />
-                      </svg>
-                      <span className="font-medium text-gray-900 dark:text-white">
-                        Apple Calendar
-                      </span>
+                    <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 text-amber-800 dark:text-amber-200 text-xs sm:text-sm">
+                      <p className="font-medium mb-1">📱 Mobile Notice:</p>
+                      <p>Only Apple Calendar is available on mobile devices. For Outlook or Google Calendar, please use a desktop computer.</p>
                     </div>
-                  </button>
-                </div>
+                  </>
+                ) : (
+                  <>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Calendar Format:
+                    </label>
+                    <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-3">
+                      The calendar file will download as a .ics file. See instructions below for importing to Outlook or Google Calendar.
+                    </p>
+                  </>
+                )}
               </div>
 
               {/* Convert Button */}
@@ -352,36 +362,106 @@ export default function Home() {
           <h2 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white mb-3 sm:mb-4">
             How it works
           </h2>
-          <ol className="space-y-2 sm:space-y-3 text-sm sm:text-base text-gray-600 dark:text-gray-300 mb-4 sm:mb-6">
-            <li className="flex items-start">
-              <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">1.</span>
-              <span>Upload one or more clear screenshots of your work schedule</span>
-            </li>
-            <li className="flex items-start">
-              <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">2.</span>
-              <span>Choose your preferred calendar format (Outlook or Apple Calendar)</span>
-            </li>
-            <li className="flex items-start">
-              <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">3.</span>
-              <span>Click convert and download your combined calendar file (.ics)</span>
-            </li>
-            <li className="flex items-start">
-              <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">4.</span>
-              <span>Double-click the downloaded .ics file to open it in Calendar</span>
-            </li>
-          </ol>
-          
-          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 sm:p-4">
-            <h3 className="font-semibold text-blue-900 dark:text-blue-100 mb-2 flex items-center text-sm sm:text-base">
-              <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              To sync across your Mac and iPhone:
-            </h3>
-            <p className="text-blue-800 dark:text-blue-200 text-xs sm:text-sm">
-              When the events open in Calendar, make sure to select your <strong>iCloud</strong> calendar (not "On My Mac") from the dropdown. This will sync your schedule to all your Apple devices automatically.
-            </p>
-          </div>
+          {isMobile ? (
+            <>
+              <ol className="space-y-2 sm:space-y-3 text-sm sm:text-base text-gray-600 dark:text-gray-300 mb-4 sm:mb-6">
+                <li className="flex items-start">
+                  <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">1.</span>
+                  <span>Upload one or more clear screenshots of your work schedule</span>
+                </li>
+                <li className="flex items-start">
+                  <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">2.</span>
+                  <span>Click convert and download your calendar file (.ics)</span>
+                </li>
+                <li className="flex items-start">
+                  <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">3.</span>
+                  <span>Tap the downloaded .ics file to open it in Apple Calendar</span>
+                </li>
+                <li className="flex items-start">
+                  <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">4.</span>
+                  <span>Tap "Add All" to import the events to your calendar</span>
+                </li>
+              </ol>
+              
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 sm:p-4">
+                <h3 className="font-semibold text-blue-900 dark:text-blue-100 mb-2 flex items-center text-sm sm:text-base">
+                  <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Mobile Calendar Sync:
+                </h3>
+                <p className="text-blue-800 dark:text-blue-200 text-xs sm:text-sm">
+                  Events will be added to your default calendar. To sync across devices, make sure your default calendar is set to iCloud in Settings.
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <ol className="space-y-2 sm:space-y-3 text-sm sm:text-base text-gray-600 dark:text-gray-300 mb-4 sm:mb-6">
+                <li className="flex items-start">
+                  <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">1.</span>
+                  <span>Upload one or more clear screenshots of your work schedule</span>
+                </li>
+                <li className="flex items-start">
+                  <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">2.</span>
+                  <span>Click convert and download your calendar file (.ics)</span>
+                </li>
+                <li className="flex items-start">
+                  <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">3.</span>
+                  <span>Import the .ics file to your calendar application (see instructions below)</span>
+                </li>
+              </ol>
+              
+              <div className="space-y-4">
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 sm:p-4">
+                  <h3 className="font-semibold text-blue-900 dark:text-blue-100 mb-2 flex items-center text-sm sm:text-base">
+                    <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Apple Calendar (Mac):
+                  </h3>
+                  <p className="text-blue-800 dark:text-blue-200 text-xs sm:text-sm mb-2">
+                    Double-click the downloaded .ics file. It will automatically open in Calendar and ask you to confirm adding the events.
+                  </p>
+                  <p className="text-blue-800 dark:text-blue-200 text-xs sm:text-sm">
+                    <strong>Tip:</strong> Select your <strong>iCloud</strong> calendar (not "On My Mac") from the calendar dropdown to sync across all your Apple devices.
+                  </p>
+                </div>
+                
+                <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 sm:p-4">
+                  <h3 className="font-semibold text-green-900 dark:text-green-100 mb-2 flex items-center text-sm sm:text-base">
+                    <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+                    </svg>
+                    Google Calendar:
+                  </h3>
+                  <ol className="text-green-800 dark:text-green-200 text-xs sm:text-sm space-y-1 list-decimal list-inside">
+                    <li>Go to <a href="https://calendar.google.com" target="_blank" rel="noopener noreferrer" className="underline font-medium">calendar.google.com</a></li>
+                    <li>Click the gear icon (⚙️) in the top right and select "Settings"</li>
+                    <li>In the left sidebar, click "Import & export"</li>
+                    <li>Click "Select file from your computer" and choose the downloaded .ics file</li>
+                    <li>Select which calendar to add the events to, then click "Import"</li>
+                  </ol>
+                </div>
+                
+                <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-3 sm:p-4">
+                  <h3 className="font-semibold text-purple-900 dark:text-purple-100 mb-2 flex items-center text-sm sm:text-base">
+                    <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M7.5 21H2V9h5.5v12zm7.25-18h-5.5C8.57 3 7.5 4.57 7.5 6.75V21H13V9.75h2.25V21h3.75V9.75h2.25V21H22V9.75C22 7.57 20.93 3 16.75 3z" />
+                    </svg>
+                    Outlook Calendar:
+                  </h3>
+                  <ol className="text-purple-800 dark:text-purple-200 text-xs sm:text-sm space-y-1 list-decimal list-inside">
+                    <li>Open Outlook (desktop app or web at <a href="https://outlook.live.com" target="_blank" rel="noopener noreferrer" className="underline font-medium">outlook.live.com</a>)</li>
+                    <li>Go to "File" → "Open & Export" → "Import/Export" (desktop) or "Settings" → "View all Outlook settings" → "Calendar" → "Shared calendars" → "Import calendar" (web)</li>
+                    <li>Select "Import an iCalendar (.ics) or vCalendar file" and click "Next"</li>
+                    <li>Browse and select the downloaded .ics file, then click "OK"</li>
+                    <li>The events will be imported to your default calendar</li>
+                  </ol>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </main>
     </div>
