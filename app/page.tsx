@@ -51,6 +51,18 @@ export default function Home() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  const requiresConnectedAccount = destination !== 'download';
+  const isSelectedProviderConnected =
+    destination === 'google'
+      ? authStatus.google
+      : destination === 'outlook'
+      ? authStatus.outlook
+      : true;
+  const canUseSelectedDestination =
+    !requiresConnectedAccount || isSelectedProviderConnected;
+  const isConvertDisabled =
+    isProcessing || selectedFiles.length === 0 || !canUseSelectedDestination;
+
   useEffect(() => {
     const refreshAuthStatus = async () => {
       try {
@@ -121,6 +133,14 @@ export default function Home() {
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
+    if (!canUseSelectedDestination) {
+      setError(
+        `Connect your ${
+          destination === 'google' ? 'Google' : 'Outlook'
+        } account before uploading images for sync.`
+      );
+      return;
+    }
     const files = e.dataTransfer.files;
     if (files.length > 0) {
       handleFilesSelect(files);
@@ -132,10 +152,31 @@ export default function Home() {
   };
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canUseSelectedDestination) {
+      setError(
+        `Connect your ${
+          destination === 'google' ? 'Google' : 'Outlook'
+        } account before uploading images for sync.`
+      );
+      e.target.value = '';
+      return;
+    }
     const files = e.target.files;
     if (files && files.length > 0) {
       handleFilesSelect(files);
     }
+  };
+
+  const handleUploadClick = () => {
+    if (!canUseSelectedDestination) {
+      setError(
+        `Connect your ${
+          destination === 'google' ? 'Google' : 'Outlook'
+        } account before uploading images for sync.`
+      );
+      return;
+    }
+    fileInputRef.current?.click();
   };
 
   const handleConnectProvider = (provider: 'google' | 'outlook') => {
@@ -278,13 +319,130 @@ export default function Home() {
         </div>
 
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-6 md:p-8 mb-6 sm:mb-8">
+          {/* Delivery Selection */}
+          <div className="space-y-3 sm:space-y-4 mb-5 sm:mb-6">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Delivery Method:
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <button
+                type="button"
+                onClick={() => setDestination('download')}
+                className={`p-3 rounded-lg border-2 transition-colors text-left ${
+                  destination === 'download'
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                    : 'border-gray-300 dark:border-gray-600 hover:border-blue-400'
+                }`}
+              >
+                <p className="font-medium text-gray-900 dark:text-white">Download .ics</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Apple/manual import</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDestination('google')}
+                className={`p-3 rounded-lg border-2 transition-colors text-left ${
+                  destination === 'google'
+                    ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                    : 'border-gray-300 dark:border-gray-600 hover:border-green-400'
+                }`}
+              >
+                <p className="font-medium text-gray-900 dark:text-white">Google Calendar</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Native sync</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDestination('outlook')}
+                className={`p-3 rounded-lg border-2 transition-colors text-left ${
+                  destination === 'outlook'
+                    ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
+                    : 'border-gray-300 dark:border-gray-600 hover:border-purple-400'
+                }`}
+              >
+                <p className="font-medium text-gray-900 dark:text-white">Outlook Calendar</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Native sync</p>
+              </button>
+            </div>
+
+            {destination === 'download' && (
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
+                Apple/manual flow. No account connection required before upload.
+              </p>
+            )}
+
+            {destination !== 'download' && (
+              <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 sm:p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">
+                      {destination === 'google' ? 'Google' : 'Outlook'} account
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      {destination === 'google'
+                        ? authStatus.google
+                          ? 'Connected'
+                          : 'Not connected'
+                        : authStatus.outlook
+                        ? 'Connected'
+                        : 'Not connected'}
+                    </p>
+                  </div>
+                  {destination === 'google' ? (
+                    authStatus.google ? (
+                      <button
+                        type="button"
+                        onClick={() => handleDisconnectProvider('google')}
+                        className="px-3 py-2 text-sm rounded-lg border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/20"
+                      >
+                        Disconnect
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleConnectProvider('google')}
+                        className="px-3 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 text-white"
+                      >
+                        Connect Google
+                      </button>
+                    )
+                  ) : authStatus.outlook ? (
+                    <button
+                      type="button"
+                      onClick={() => handleDisconnectProvider('outlook')}
+                      className="px-3 py-2 text-sm rounded-lg border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/20"
+                    >
+                      Disconnect
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleConnectProvider('outlook')}
+                      className="px-3 py-2 text-sm rounded-lg bg-purple-600 hover:bg-purple-700 text-white"
+                    >
+                      Connect Outlook
+                    </button>
+                  )}
+                </div>
+                {!canUseSelectedDestination && (
+                  <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">
+                    Connect your {destination === 'google' ? 'Google' : 'Outlook'} account
+                    before uploading images.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* File Upload Area */}
           {selectedFiles.length === 0 ? (
             <div
               onDrop={handleDrop}
               onDragOver={handleDragOver}
-              className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-8 sm:p-12 text-center cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 active:border-blue-600 transition-colors touch-manipulation"
-              onClick={() => fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-xl p-8 sm:p-12 text-center transition-colors touch-manipulation ${
+                canUseSelectedDestination
+                  ? 'border-gray-300 dark:border-gray-600 cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 active:border-blue-600'
+                  : 'border-amber-300 dark:border-amber-700 cursor-not-allowed bg-amber-50/40 dark:bg-amber-900/10'
+              }`}
+              onClick={handleUploadClick}
             >
               <input
                 ref={fileInputRef}
@@ -292,6 +450,7 @@ export default function Home() {
                 accept="image/*"
                 multiple
                 onChange={handleFileInputChange}
+                disabled={!canUseSelectedDestination}
                 className="hidden"
               />
               <svg
@@ -308,10 +467,16 @@ export default function Home() {
                 />
               </svg>
               <p className="text-base sm:text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Drag and drop your schedule images here
+                {canUseSelectedDestination
+                  ? 'Drag and drop your schedule images here'
+                  : `Connect ${
+                      destination === 'google' ? 'Google' : 'Outlook'
+                    } before uploading`}
               </p>
               <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
-                or tap to browse files (you can select multiple images)
+                {canUseSelectedDestination
+                  ? 'or tap to browse files (you can select multiple images)'
+                  : 'Once connected, upload and sync will be enabled.'}
               </p>
             </div>
           ) : (
@@ -363,7 +528,7 @@ export default function Home() {
                   ))}
                 </div>
                 <button
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={handleUploadClick}
                   className="w-full border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-4 text-center hover:border-blue-500 dark:hover:border-blue-400 active:border-blue-600 transition-colors text-gray-600 dark:text-gray-400 touch-manipulation min-h-[44px]"
                 >
                   <input
@@ -372,117 +537,11 @@ export default function Home() {
                     accept="image/*"
                     multiple
                     onChange={handleFileInputChange}
+                    disabled={!canUseSelectedDestination}
                     className="hidden"
                   />
                   + Add More Images
                 </button>
-              </div>
-
-              {/* Delivery Selection */}
-              <div className="space-y-3 sm:space-y-4">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Delivery Method:
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setDestination('download')}
-                    className={`p-3 rounded-lg border-2 transition-colors text-left ${
-                      destination === 'download'
-                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                        : 'border-gray-300 dark:border-gray-600 hover:border-blue-400'
-                    }`}
-                  >
-                    <p className="font-medium text-gray-900 dark:text-white">Download .ics</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Manual import</p>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDestination('google')}
-                    className={`p-3 rounded-lg border-2 transition-colors text-left ${
-                      destination === 'google'
-                        ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
-                        : 'border-gray-300 dark:border-gray-600 hover:border-green-400'
-                    }`}
-                  >
-                    <p className="font-medium text-gray-900 dark:text-white">Google Calendar</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Native sync</p>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDestination('outlook')}
-                    className={`p-3 rounded-lg border-2 transition-colors text-left ${
-                      destination === 'outlook'
-                        ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                        : 'border-gray-300 dark:border-gray-600 hover:border-purple-400'
-                    }`}
-                  >
-                    <p className="font-medium text-gray-900 dark:text-white">Outlook Calendar</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Native sync</p>
-                  </button>
-                </div>
-
-                {destination === 'download' && (
-                  <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
-                    Downloads a calendar file you can import manually.
-                  </p>
-                )}
-
-                {destination !== 'download' && (
-                  <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 sm:p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium text-gray-900 dark:text-white">
-                          {destination === 'google' ? 'Google' : 'Outlook'} account
-                        </p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {destination === 'google'
-                            ? authStatus.google
-                              ? 'Connected'
-                              : 'Not connected'
-                            : authStatus.outlook
-                            ? 'Connected'
-                            : 'Not connected'}
-                        </p>
-                      </div>
-                      {destination === 'google' ? (
-                        authStatus.google ? (
-                          <button
-                            type="button"
-                            onClick={() => handleDisconnectProvider('google')}
-                            className="px-3 py-2 text-sm rounded-lg border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/20"
-                          >
-                            Disconnect
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleConnectProvider('google')}
-                            className="px-3 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 text-white"
-                          >
-                            Connect Google
-                          </button>
-                        )
-                      ) : authStatus.outlook ? (
-                        <button
-                          type="button"
-                          onClick={() => handleDisconnectProvider('outlook')}
-                          className="px-3 py-2 text-sm rounded-lg border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/20"
-                        >
-                          Disconnect
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleConnectProvider('outlook')}
-                          className="px-3 py-2 text-sm rounded-lg bg-purple-600 hover:bg-purple-700 text-white"
-                        >
-                          Connect Outlook
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
 
               {/* Repeat Options */}
@@ -582,7 +641,7 @@ export default function Home() {
               {/* Convert Button */}
               <button
                 onClick={handleConvert}
-                disabled={isProcessing}
+                disabled={isConvertDisabled}
                 className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-blue-400 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-lg transition-colors flex items-center justify-center space-x-2 touch-manipulation min-h-[52px] text-base sm:text-lg"
               >
                 {isProcessing ? (
@@ -628,7 +687,9 @@ export default function Home() {
                       />
                     </svg>
                     <span>
-                      {destination === 'download'
+                      {!canUseSelectedDestination
+                        ? `Connect ${destination === 'google' ? 'Google' : 'Outlook'} to Continue`
+                        : destination === 'download'
                         ? 'Convert & Download Calendar'
                         : `Convert & Sync to ${
                             destination === 'google' ? 'Google' : 'Outlook'
