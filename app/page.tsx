@@ -546,6 +546,14 @@ export default function Home() {
 
               {/* Repeat Options */}
               <div className="space-y-3 sm:space-y-4">
+                <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 sm:p-4">
+                  <p className="text-sm font-medium text-gray-900 dark:text-white">
+                    Repeat schedule
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Turn this on to repeat each extracted shift every week. Then choose when repeats should end.
+                  </p>
+                </div>
                 <label className="flex items-center space-x-3 cursor-pointer">
                   <input
                     type="checkbox"
@@ -554,7 +562,7 @@ export default function Home() {
                     className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
                   />
                   <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Repeat weekly
+                    Repeat this schedule weekly
                   </span>
                 </label>
                 
@@ -571,7 +579,7 @@ export default function Home() {
                           onChange={(e) => setRepeatMode(e.target.value as 'weeks' | 'date')}
                           className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500 cursor-pointer"
                         />
-                        <span className="text-sm text-gray-700 dark:text-gray-300">Repeat for number of weeks</span>
+                        <span className="text-sm text-gray-700 dark:text-gray-300">End after number of weeks</span>
                       </label>
                       <label className="flex items-center space-x-2 cursor-pointer">
                         <input
@@ -582,7 +590,7 @@ export default function Home() {
                           onChange={(e) => setRepeatMode(e.target.value as 'weeks' | 'date')}
                           className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500 cursor-pointer"
                         />
-                        <span className="text-sm text-gray-700 dark:text-gray-300">Repeat until date</span>
+                        <span className="text-sm text-gray-700 dark:text-gray-300">End on a specific date</span>
                       </label>
                     </div>
                     
