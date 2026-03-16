@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 
 interface ScheduleEvent {
   start: Date;
@@ -9,15 +9,41 @@ interface ScheduleEvent {
   location?: string;
 }
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+interface ParsedModelEvent {
+  start?: string;
+  end?: string;
+  title?: string;
+  summary?: string;
+  description?: string;
+  location?: string;
+}
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-function parseEventsFromJSON(eventsData: any[]): ScheduleEvent[] {
+function getSupportedImageMimeType(mimeType: string): 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' {
+  if (mimeType === 'image/jpeg' || mimeType === 'image/png' || mimeType === 'image/gif' || mimeType === 'image/webp') {
+    return mimeType;
+  }
+
+  return 'image/png';
+}
+
+function parseEventsFromJSON(eventsData: unknown[]): ScheduleEvent[] {
   const events: ScheduleEvent[] = [];
   
-  for (const event of eventsData) {
+  for (const item of eventsData) {
     try {
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+
+      const event = item as ParsedModelEvent;
+      if (typeof event.start !== 'string' || typeof event.end !== 'string') {
+        continue;
+      }
+
       // Parse ISO string and create local Date objects (treat as local time, not UTC)
       // Example: "2026-01-10T15:00:00" -> local Date for Jan 10, 2026 at 3:00 PM
       const startStr = event.start;
@@ -86,11 +112,12 @@ async function processImage(file: File): Promise<ScheduleEvent[]> {
   // Convert image to base64
   const arrayBuffer = await file.arrayBuffer();
   const base64Image = Buffer.from(arrayBuffer).toString('base64');
-  const mimeType = file.type || 'image/png';
+  const mimeType = getSupportedImageMimeType(file.type || 'image/png');
   
-  // Use GPT-4 Vision to extract schedule information
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
+  // Use Claude Sonnet 4 vision to extract schedule information
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 4096,
     messages: [
       {
         role: 'user',
@@ -122,9 +149,11 @@ Important:
 - Return ONLY valid JSON in the format above, no markdown, no code blocks, just the JSON object.`
           },
           {
-            type: 'image_url',
-            image_url: {
-              url: `data:${mimeType};base64,${base64Image}`,
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: mimeType,
+              data: base64Image,
             },
           },
         ],
@@ -133,7 +162,11 @@ Important:
     temperature: 0.1,
   });
   
-  const content = response.choices[0]?.message?.content;
+  const content = response.content
+    .filter((block) => block.type === 'text')
+    .map((block) => ('text' in block ? block.text : ''))
+    .join('\n')
+    .trim();
   if (!content) {
     throw new Error('No response from AI model');
   }
@@ -238,9 +271,9 @@ function generateCalendar(events: ScheduleEvent[], format: 'outlook' | 'apple', 
 
 export async function POST(request: NextRequest) {
   try {
-    if (!process.env.OPENAI_API_KEY) {
+    if (!process.env.ANTHROPIC_API_KEY) {
       return NextResponse.json(
-        { error: 'OpenAI API key is not configured. Please set OPENAI_API_KEY environment variable.' },
+        { error: 'Anthropic API key is not configured. Please set ANTHROPIC_API_KEY environment variable.' },
         { status: 500 }
       );
     }
