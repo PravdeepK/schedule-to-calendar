@@ -41,21 +41,23 @@ export function getProviderScopes(provider: CalendarProvider): string {
     return 'https://www.googleapis.com/auth/calendar.events';
   }
 
-  return 'offline_access User.Read Calendars.ReadWrite';
+  return 'offline_access Calendars.ReadWrite';
 }
 
 export function getAuthEndpoint(provider: CalendarProvider): string {
   if (provider === 'google') {
     return 'https://accounts.google.com/o/oauth2/v2/auth';
   }
-  return 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize';
+  const microsoftTenant = process.env.MICROSOFT_TENANT_ID || 'common';
+  return `https://login.microsoftonline.com/${microsoftTenant}/oauth2/v2.0/authorize`;
 }
 
 export function getTokenEndpoint(provider: CalendarProvider): string {
   if (provider === 'google') {
     return 'https://oauth2.googleapis.com/token';
   }
-  return 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
+  const microsoftTenant = process.env.MICROSOFT_TENANT_ID || 'common';
+  return `https://login.microsoftonline.com/${microsoftTenant}/oauth2/v2.0/token`;
 }
 
 export function getClientId(provider: CalendarProvider): string | undefined {

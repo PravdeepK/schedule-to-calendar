@@ -34,6 +34,7 @@ GOOGLE_REDIRECT_URI=http://localhost:3000/api/auth/google/callback
 MICROSOFT_CLIENT_ID=your_microsoft_client_id
 MICROSOFT_CLIENT_SECRET=your_microsoft_client_secret
 MICROSOFT_REDIRECT_URI=http://localhost:3000/api/auth/outlook/callback
+MICROSOFT_TENANT_ID=consumers
 ```
 
 3. Run the development server:
@@ -52,6 +53,7 @@ npm run dev
 - `GOOGLE_REDIRECT_URI`: OAuth callback URL registered in Google Cloud Console
 - `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET`: Microsoft OAuth credentials for Outlook sync
 - `MICROSOFT_REDIRECT_URI`: OAuth callback URL registered in Azure App Registration
+- `MICROSOFT_TENANT_ID` (optional): Microsoft tenant segment (`consumers`, `common`, or your tenant ID). Use `consumers` for personal accounts only apps.
 
 ### Setting up on Vercel
 
