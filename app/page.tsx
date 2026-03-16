@@ -8,13 +8,26 @@ interface FileWithPreview {
   id: string;
 }
 
+type SyncDestination = 'download' | 'google' | 'outlook';
+
+interface AuthStatus {
+  google: boolean;
+  outlook: boolean;
+}
+
 export default function Home() {
   const [selectedFiles, setSelectedFiles] = useState<FileWithPreview[]>([]);
   const [format, setFormat] = useState<'outlook' | 'apple'>('apple');
+  const [destination, setDestination] = useState<SyncDestination>('download');
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>({
+    google: false,
+    outlook: false,
+  });
   const [repeatWeekly, setRepeatWeekly] = useState(false);
   const [repeatMode, setRepeatMode] = useState<'weeks' | 'date'>('weeks');
   const [repeatWeeks, setRepeatWeeks] = useState<number>(4);
@@ -36,6 +49,48 @@ export default function Home() {
     checkMobile();
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  useEffect(() => {
+    const refreshAuthStatus = async () => {
+      try {
+        const response = await fetch('/api/auth/status');
+        if (!response.ok) {
+          return;
+        }
+        const data = (await response.json()) as AuthStatus;
+        setAuthStatus({
+          google: Boolean(data.google),
+          outlook: Boolean(data.outlook),
+        });
+      } catch {
+        // Keep UI functional even if status request fails
+      }
+    };
+
+    refreshAuthStatus();
+
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get('connected');
+    const authError = params.get('auth_error');
+    if (connected === 'google' || connected === 'outlook') {
+      setStatusMessage(
+        `${connected === 'google' ? 'Google' : 'Outlook'} connected successfully.`
+      );
+      refreshAuthStatus();
+      params.delete('connected');
+      const nextUrl = `${window.location.pathname}${
+        params.toString() ? `?${params.toString()}` : ''
+      }`;
+      window.history.replaceState({}, '', nextUrl);
+    } else if (authError) {
+      setError(`Calendar connection failed: ${decodeURIComponent(authError)}`);
+      params.delete('auth_error');
+      const nextUrl = `${window.location.pathname}${
+        params.toString() ? `?${params.toString()}` : ''
+      }`;
+      window.history.replaceState({}, '', nextUrl);
+    }
   }, []);
 
   const handleFilesSelect = (files: FileList | File[]) => {
@@ -83,6 +138,33 @@ export default function Home() {
     }
   };
 
+  const handleConnectProvider = (provider: 'google' | 'outlook') => {
+    window.location.href = `/api/auth/${provider}/start`;
+  };
+
+  const handleDisconnectProvider = async (provider: 'google' | 'outlook') => {
+    try {
+      const response = await fetch('/api/auth/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider }),
+      });
+      if (!response.ok) {
+        throw new Error('Disconnect failed');
+      }
+      setAuthStatus((prev) => ({ ...prev, [provider]: false }));
+      if (destination === provider) {
+        setDestination('download');
+      }
+      setStatusMessage(
+        `${provider === 'google' ? 'Google' : 'Outlook'} disconnected.`
+      );
+      setError(null);
+    } catch {
+      setError('Failed to disconnect provider. Please try again.');
+    }
+  };
+
   const handleConvert = async () => {
     if (selectedFiles.length === 0) {
       setError('Please select at least one image first');
@@ -91,15 +173,33 @@ export default function Home() {
 
     setIsProcessing(true);
     setError(null);
+    setStatusMessage(null);
     setProcessingProgress(0);
 
     try {
-      // Send all images to server for AI processing
       const formData = new FormData();
       selectedFiles.forEach((fileWithPreview) => {
         formData.append('images', fileWithPreview.file);
       });
-      formData.append('format', format);
+
+      if (destination === 'download') {
+        formData.append('format', format);
+      } else {
+        const isConnected = destination === 'google' ? authStatus.google : authStatus.outlook;
+        if (!isConnected) {
+          throw new Error(
+            `Please connect your ${
+              destination === 'google' ? 'Google' : 'Outlook'
+            } account first.`
+          );
+        }
+        formData.append('provider', destination);
+        formData.append(
+          'timeZone',
+          Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York'
+        );
+      }
+
       if (repeatWeekly) {
         formData.append('repeatWeekly', 'true');
         formData.append('repeatMode', repeatMode);
@@ -111,7 +211,8 @@ export default function Home() {
       }
 
       setProcessingProgress(20);
-      const response = await fetch('/api/convert', {
+      const endpoint = destination === 'download' ? '/api/convert' : '/api/sync';
+      const response = await fetch(endpoint, {
         method: 'POST',
         body: formData,
       });
@@ -124,15 +225,25 @@ export default function Home() {
       }
 
       setProcessingProgress(95);
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `schedule.ics`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      if (destination === 'download') {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'schedule.ics';
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        setStatusMessage('Calendar file downloaded.');
+      } else {
+        const result = await response.json();
+        setStatusMessage(
+          `Synced ${result.syncedCount} event${
+            result.syncedCount === 1 ? '' : 's'
+          } to ${destination === 'google' ? 'Google Calendar' : 'Outlook Calendar'}.`
+        );
+      }
       
       setProcessingProgress(100);
     } catch (err) {
@@ -162,7 +273,7 @@ export default function Home() {
             Schedule to Calendar
           </h1>
           <p className="text-base sm:text-lg md:text-xl text-gray-600 dark:text-gray-300 px-2">
-            Upload screenshots of your work schedule and convert them to a calendar file
+            Upload schedule screenshots and download or sync them to your calendar
           </p>
         </div>
 
@@ -267,46 +378,110 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* Format Selection */}
+              {/* Delivery Selection */}
               <div className="space-y-3 sm:space-y-4">
-                {isMobile ? (
-                  <>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                      Calendar Format:
-                    </label>
-                    <div className="grid grid-cols-1 gap-3 sm:gap-4">
-                      <button
-                        className="p-3 sm:p-4 rounded-lg border-2 border-blue-500 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-400 touch-manipulation min-h-[80px] cursor-default"
-                        disabled
-                      >
-                        <div className="flex items-center justify-center space-x-3">
-                          <svg
-                            className="w-8 h-8"
-                            fill="currentColor"
-                            viewBox="0 0 24 24"
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Delivery Method:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setDestination('download')}
+                    className={`p-3 rounded-lg border-2 transition-colors text-left ${
+                      destination === 'download'
+                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                        : 'border-gray-300 dark:border-gray-600 hover:border-blue-400'
+                    }`}
+                  >
+                    <p className="font-medium text-gray-900 dark:text-white">Download .ics</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Manual import</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDestination('google')}
+                    className={`p-3 rounded-lg border-2 transition-colors text-left ${
+                      destination === 'google'
+                        ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                        : 'border-gray-300 dark:border-gray-600 hover:border-green-400'
+                    }`}
+                  >
+                    <p className="font-medium text-gray-900 dark:text-white">Google Calendar</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Native sync</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDestination('outlook')}
+                    className={`p-3 rounded-lg border-2 transition-colors text-left ${
+                      destination === 'outlook'
+                        ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
+                        : 'border-gray-300 dark:border-gray-600 hover:border-purple-400'
+                    }`}
+                  >
+                    <p className="font-medium text-gray-900 dark:text-white">Outlook Calendar</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Native sync</p>
+                  </button>
+                </div>
+
+                {destination === 'download' && (
+                  <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
+                    Downloads a calendar file you can import manually.
+                  </p>
+                )}
+
+                {destination !== 'download' && (
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 sm:p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">
+                          {destination === 'google' ? 'Google' : 'Outlook'} account
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {destination === 'google'
+                            ? authStatus.google
+                              ? 'Connected'
+                              : 'Not connected'
+                            : authStatus.outlook
+                            ? 'Connected'
+                            : 'Not connected'}
+                        </p>
+                      </div>
+                      {destination === 'google' ? (
+                        authStatus.google ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDisconnectProvider('google')}
+                            className="px-3 py-2 text-sm rounded-lg border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/20"
                           >
-                            <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" />
-                          </svg>
-                          <span className="font-medium text-gray-900 dark:text-white">
-                            Apple Calendar
-                          </span>
-                        </div>
-                      </button>
+                            Disconnect
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleConnectProvider('google')}
+                            className="px-3 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 text-white"
+                          >
+                            Connect Google
+                          </button>
+                        )
+                      ) : authStatus.outlook ? (
+                        <button
+                          type="button"
+                          onClick={() => handleDisconnectProvider('outlook')}
+                          className="px-3 py-2 text-sm rounded-lg border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/20"
+                        >
+                          Disconnect
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleConnectProvider('outlook')}
+                          className="px-3 py-2 text-sm rounded-lg bg-purple-600 hover:bg-purple-700 text-white"
+                        >
+                          Connect Outlook
+                        </button>
+                      )}
                     </div>
-                    <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 text-amber-800 dark:text-amber-200 text-xs sm:text-sm">
-                      <p className="font-medium mb-1">📱 Mobile Notice:</p>
-                      <p>Only Apple Calendar is available on mobile devices. For Outlook or Google Calendar, please use a desktop computer.</p>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                      Calendar Format:
-                    </label>
-                    <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-3">
-                      The calendar file will download as a .ics file. See instructions below for importing to Outlook or Google Calendar.
-                    </p>
-                  </>
+                  </div>
                 )}
               </div>
 
@@ -432,7 +607,10 @@ export default function Home() {
                         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                       ></path>
                     </svg>
-                    <span>Analyzing schedules... {processingProgress > 0 ? `${Math.round(processingProgress)}%` : ''}</span>
+                    <span>
+                      {destination === 'download' ? 'Analyzing schedules...' : 'Syncing schedules...'}{' '}
+                      {processingProgress > 0 ? `${Math.round(processingProgress)}%` : ''}
+                    </span>
                   </>
                 ) : (
                   <>
@@ -449,7 +627,13 @@ export default function Home() {
                         d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
                       />
                     </svg>
-                    <span>Convert & Download Calendar</span>
+                    <span>
+                      {destination === 'download'
+                        ? 'Convert & Download Calendar'
+                        : `Convert & Sync to ${
+                            destination === 'google' ? 'Google' : 'Outlook'
+                          }`}
+                    </span>
                   </>
                 )}
               </button>
@@ -460,6 +644,11 @@ export default function Home() {
           {error && (
             <div className="mt-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 px-4 py-3 rounded-lg">
               {error}
+            </div>
+          )}
+          {statusMessage && (
+            <div className="mt-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-200 px-4 py-3 rounded-lg">
+              {statusMessage}
             </div>
           )}
         </div>
@@ -478,7 +667,7 @@ export default function Home() {
                 </li>
                 <li className="flex items-start">
                   <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">2.</span>
-                  <span>Click convert and download your calendar file (.ics)</span>
+                  <span>Click convert to create your calendar events</span>
                 </li>
                 <li className="flex items-start">
                   <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">3.</span>
@@ -486,7 +675,7 @@ export default function Home() {
                 </li>
                 <li className="flex items-start">
                   <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">4.</span>
-                  <span>Tap "Add All" to import the events to your calendar</span>
+                  <span>Tap Add All to import the events to your calendar</span>
                 </li>
               </ol>
               
@@ -511,11 +700,11 @@ export default function Home() {
                 </li>
                 <li className="flex items-start">
                   <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">2.</span>
-                  <span>Click convert and download your calendar file (.ics)</span>
+                  <span>Choose download (.ics) or native Google/Outlook sync</span>
                 </li>
                 <li className="flex items-start">
                   <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">3.</span>
-                  <span>Import the .ics file to your calendar application (see instructions below)</span>
+                  <span>If you chose download, import the .ics file (instructions below)</span>
                 </li>
               </ol>
               
@@ -531,7 +720,7 @@ export default function Home() {
                     Double-click the downloaded .ics file. It will automatically open in Calendar and ask you to confirm adding the events.
                   </p>
                   <p className="text-blue-800 dark:text-blue-200 text-xs sm:text-sm">
-                    <strong>Tip:</strong> Select your <strong>iCloud</strong> calendar (not "On My Mac") from the calendar dropdown to sync across all your Apple devices.
+                    <strong>Tip:</strong> Select your <strong>iCloud</strong> calendar (not On My Mac) from the calendar dropdown to sync across all your Apple devices.
                   </p>
                 </div>
                 
@@ -544,10 +733,10 @@ export default function Home() {
                   </h3>
                   <ol className="text-green-800 dark:text-green-200 text-xs sm:text-sm space-y-1 list-decimal list-inside">
                     <li>Go to <a href="https://calendar.google.com" target="_blank" rel="noopener noreferrer" className="underline font-medium">calendar.google.com</a></li>
-                    <li>Click the gear icon (⚙️) in the top right and select "Settings"</li>
-                    <li>In the left sidebar, click "Import & export"</li>
-                    <li>Click "Select file from your computer" and choose the downloaded .ics file</li>
-                    <li>Select which calendar to add the events to, then click "Import"</li>
+                    <li>Click the gear icon (⚙️) in the top right and select Settings</li>
+                    <li>In the left sidebar, click Import &amp; export</li>
+                    <li>Click Select file from your computer and choose the downloaded .ics file</li>
+                    <li>Select which calendar to add the events to, then click Import</li>
                   </ol>
                 </div>
                 
@@ -560,9 +749,9 @@ export default function Home() {
                   </h3>
                   <ol className="text-purple-800 dark:text-purple-200 text-xs sm:text-sm space-y-1 list-decimal list-inside">
                     <li>Open Outlook (desktop app or web at <a href="https://outlook.live.com" target="_blank" rel="noopener noreferrer" className="underline font-medium">outlook.live.com</a>)</li>
-                    <li>Go to "File" → "Open & Export" → "Import/Export" (desktop) or "Settings" → "View all Outlook settings" → "Calendar" → "Shared calendars" → "Import calendar" (web)</li>
-                    <li>Select "Import an iCalendar (.ics) or vCalendar file" and click "Next"</li>
-                    <li>Browse and select the downloaded .ics file, then click "OK"</li>
+                    <li>Go to File → Open &amp; Export → Import/Export (desktop) or Settings → View all Outlook settings → Calendar → Shared calendars → Import calendar (web)</li>
+                    <li>Select Import an iCalendar (.ics) or vCalendar file and click Next</li>
+                    <li>Browse and select the downloaded .ics file, then click OK</li>
                     <li>The events will be imported to your default calendar</li>
                   </ol>
                 </div>

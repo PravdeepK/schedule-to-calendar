@@ -14,7 +14,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Schedule to Calendar - Convert Work Schedule Screenshots",
-  description: "Upload a screenshot of your work schedule and convert it to Outlook or Apple Calendar format",
+  description:
+    "Upload schedule screenshots and either download an .ics file or sync directly to Google and Outlook Calendar",
 };
 
 export const viewport: Viewport = {
