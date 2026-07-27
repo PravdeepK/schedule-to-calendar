@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    const { events: allEvents, errors } = await extractEventsFromFiles(files);
+    const { events: allEvents, errors, warnings } = await extractEventsFromFiles(files);
     
     if (allEvents.length === 0) {
       const errorMsg = errors.length > 0 
@@ -75,13 +75,18 @@ export async function POST(request: NextRequest) {
       repeatUntilDate
     );
     
-    return new NextResponse(calendarContent, {
-      status: 200,
-      headers: {
-        'Content-Type': 'text/calendar',
-        'Content-Disposition': `attachment; filename="schedule.ics"`,
-      },
-    });
+    // The body is a file download, so there is nowhere in it to report a page
+    // whose hours did not reconcile. A header keeps the signal available to the
+    // browser without disturbing the .ics itself.
+    const headers: Record<string, string> = {
+      'Content-Type': 'text/calendar',
+      'Content-Disposition': `attachment; filename="schedule.ics"`,
+    };
+    if (warnings.length > 0) {
+      headers['X-Schedule-Warnings'] = JSON.stringify(warnings);
+    }
+
+    return new NextResponse(calendarContent, { status: 200, headers });
     
   } catch (error) {
     console.error('Error processing schedule:', error);
