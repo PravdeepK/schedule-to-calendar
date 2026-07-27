@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Schedule to Calendar - Convert Work Schedule Screenshots",
+  title: "Schedule to Calendar - Convert Work Schedules and Timetables",
   description:
-    "Upload schedule screenshots and either download an .ics file or sync directly to Google and Outlook Calendar",
+    "Upload a work schedule or class timetable as a PDF or image, then either download an .ics file or sync directly to Google and Outlook Calendar",
 };
 
 export const viewport: Viewport = {

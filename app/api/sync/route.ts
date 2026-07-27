@@ -7,11 +7,12 @@ import {
   type CalendarProvider,
 } from '@/lib/calendarAuth';
 import {
-  extractEventsFromImages,
+  extractEventsFromFiles,
   expandWeeklyRepeats,
   toLocalDateTimeString,
   uniqueAndSortedEvents,
 } from '@/lib/schedule';
+import { validateUploads } from '@/lib/uploadLimits';
 
 function parseRepeatOptions(formData: FormData) {
   const repeatWeekly = formData.get('repeatWeekly') === 'true';
@@ -131,6 +132,12 @@ async function createOutlookEvent(
   }
 }
 
+// Extraction is slow by nature: a dense multi-page timetable can take ~3 minutes
+// of model time. Serverless hosts kill a function long before that on their default
+// timeout, so raise it explicitly. Vercel caps this at 60 on Hobby and 300 on Pro;
+// no effect on `next dev` or a long-lived Node server.
+export const maxDuration = 300;
+
 export async function POST(request: NextRequest) {
   try {
     if (!process.env.ANTHROPIC_API_KEY) {
@@ -151,10 +158,15 @@ export async function POST(request: NextRequest) {
 
     const userTimeZone =
       (formData.get('timeZone') as string) || 'America/New_York';
-    const images = formData.getAll('images') as File[];
+    const files = formData.getAll('files') as File[];
 
-    if (!images || images.length === 0) {
-      return NextResponse.json({ error: 'No images provided' }, { status: 400 });
+    if (files.length === 0) {
+      return NextResponse.json({ error: 'No schedule files provided' }, { status: 400 });
+    }
+
+    const uploadError = validateUploads(files);
+    if (uploadError) {
+      return NextResponse.json({ error: uploadError }, { status: 400 });
     }
 
     const { repeatWeekly, repeatMode, repeatWeeks, repeatUntilDate } =
@@ -178,12 +190,12 @@ export async function POST(request: NextRequest) {
     }
 
     const token = await ensureAccessToken(provider, request.nextUrl.origin);
-    const { events: extractedEvents, errors } = await extractEventsFromImages(images);
+    const { events: extractedEvents, errors } = await extractEventsFromFiles(files);
     if (extractedEvents.length === 0) {
       const message =
         errors.length > 0
-          ? `Failed to extract events from images. ${errors.join(' ')}`
-          : 'No schedule events found in images.';
+          ? `Failed to extract events from files. ${errors.join(' ')}`
+          : 'No schedule events found in the uploaded images or PDFs.';
       return NextResponse.json({ error: message }, { status: 400 });
     }
 

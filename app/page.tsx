@@ -1,10 +1,19 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { downscaleImage } from '@/lib/image';
+import {
+  ACCEPTED_FILE_TYPES,
+  MAX_FILE_BYTES,
+  MAX_FILE_MB,
+  MAX_TOTAL_BYTES,
+  MAX_TOTAL_MB,
+  isSupportedScheduleFile,
+} from '@/lib/uploadLimits';
 
 interface FileWithPreview {
   file: File;
-  preview: string;
+  preview: string | null;
   id: string;
 }
 
@@ -32,7 +41,36 @@ export default function Home() {
   const [repeatMode, setRepeatMode] = useState<'weeks' | 'date'>('weeks');
   const [repeatWeeks, setRepeatWeeks] = useState<number>(4);
   const [repeatUntilDate, setRepeatUntilDate] = useState<string>('');
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopProgressTimer = () => {
+    if (progressTimerRef.current !== null) {
+      clearInterval(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
+  };
+
+  /**
+   * Reading a multi-page schedule is a single long request — there is no partial
+   * response to report against, so the bar is driven by elapsed time instead.
+   * It eases toward 85% and never reaches it, so it can't imply completion that
+   * hasn't happened; the real jump to 90%+ comes from the response landing.
+   * Without this the bar sat at 20% for minutes and looked like a hang.
+   */
+  const startProgressTimer = () => {
+    stopProgressTimer();
+    const startedAt = Date.now();
+    setElapsedSeconds(0);
+    progressTimerRef.current = setInterval(() => {
+      const seconds = (Date.now() - startedAt) / 1000;
+      setElapsedSeconds(Math.floor(seconds));
+      setProcessingProgress(20 + 65 * (1 - Math.exp(-seconds / 70)));
+    }, 1000);
+  };
+
+  useEffect(() => stopProgressTimer, []);
 
   useEffect(() => {
     // Detect if user is on mobile
@@ -107,25 +145,65 @@ export default function Home() {
 
   const handleFilesSelect = (files: FileList | File[]) => {
     const fileArray = Array.from(files);
-    const imageFiles = fileArray.filter(file => file.type.startsWith('image/'));
-    
-    if (imageFiles.length === 0) {
-      setError('Please select valid image files');
+    const supportedFiles = fileArray.filter(isSupportedScheduleFile);
+    const withinFileLimit = supportedFiles.filter(file => file.size <= MAX_FILE_BYTES);
+
+    // The combined size matters as much as any single file, since every selected
+    // file goes up in one request. Count what is already staged, then take new
+    // files only while the running total still fits.
+    let runningTotal = selectedFiles.reduce((sum, f) => sum + f.file.size, 0);
+    const scheduleFiles: File[] = [];
+    for (const file of withinFileLimit) {
+      if (runningTotal + file.size > MAX_TOTAL_BYTES) {
+        break;
+      }
+      runningTotal += file.size;
+      scheduleFiles.push(file);
+    }
+
+    const skippedTypes = fileArray.length - supportedFiles.length;
+    const skippedTooBig = supportedFiles.length - withinFileLimit.length;
+    const skippedOverTotal = withinFileLimit.length - scheduleFiles.length;
+
+    if (scheduleFiles.length === 0) {
+      setError(
+        skippedOverTotal > 0
+          ? `That would exceed the ${MAX_TOTAL_MB}MB total upload limit. Remove a file and try again.`
+          : skippedTooBig > 0
+            ? `Each file must be under ${MAX_FILE_MB}MB.`
+            : 'Please select a PDF or a supported image (JPEG, PNG, GIF, or WebP)'
+      );
       return;
     }
 
-    setError(null);
+    setError(
+      skippedOverTotal > 0
+        ? `Some files were skipped to stay under the ${MAX_TOTAL_MB}MB total limit.`
+        : skippedTooBig > 0
+          ? `Some files were skipped for being over ${MAX_FILE_MB}MB.`
+          : skippedTypes > 0
+            ? 'Some files were skipped. Use PDF, JPEG, PNG, GIF, or WebP files.'
+            : null
+    );
 
-    // Process each file to create preview
-    imageFiles.forEach(file => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
+    scheduleFiles.forEach(file => {
+      const addFile = (preview: string | null) => {
         const newFile: FileWithPreview = {
           file,
-          preview: reader.result as string,
+          preview,
           id: `${file.name}-${Date.now()}-${Math.random()}`
         };
         setSelectedFiles(prev => [...prev, newFile]);
+      };
+
+      if (file.type === 'application/pdf') {
+        addFile(null);
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        addFile(reader.result as string);
       };
       reader.readAsDataURL(file);
     });
@@ -137,7 +215,7 @@ export default function Home() {
       setError(
         `Connect your ${
           destination === 'google' ? 'Google' : 'Outlook'
-        } account before uploading images for sync.`
+        } account before uploading files for sync.`
       );
       return;
     }
@@ -156,7 +234,7 @@ export default function Home() {
       setError(
         `Connect your ${
           destination === 'google' ? 'Google' : 'Outlook'
-        } account before uploading images for sync.`
+        } account before uploading files for sync.`
       );
       e.target.value = '';
       return;
@@ -172,7 +250,7 @@ export default function Home() {
       setError(
         `Connect your ${
           destination === 'google' ? 'Google' : 'Outlook'
-        } account before uploading images for sync.`
+        } account before uploading files for sync.`
       );
       return;
     }
@@ -208,7 +286,7 @@ export default function Home() {
 
   const handleConvert = async () => {
     if (selectedFiles.length === 0) {
-      setError('Please select at least one image first');
+      setError('Please select at least one PDF or image first');
       return;
     }
 
@@ -218,9 +296,16 @@ export default function Home() {
     setProcessingProgress(0);
 
     try {
+      // Shrink oversized images before they go up, not at selection time: the
+      // size limits and the "remove this one" list should describe the file the
+      // user actually picked.
+      const uploads = await Promise.all(
+        selectedFiles.map((fileWithPreview) => downscaleImage(fileWithPreview.file))
+      );
+
       const formData = new FormData();
-      selectedFiles.forEach((fileWithPreview) => {
-        formData.append('images', fileWithPreview.file);
+      uploads.forEach((file) => {
+        formData.append('files', file);
       });
 
       if (destination === 'download') {
@@ -251,13 +336,14 @@ export default function Home() {
         }
       }
 
-      setProcessingProgress(20);
+      startProgressTimer();
       const endpoint = destination === 'download' ? '/api/convert' : '/api/sync';
       const response = await fetch(endpoint, {
         method: 'POST',
         body: formData,
       });
 
+      stopProgressTimer();
       setProcessingProgress(90);
 
       if (!response.ok) {
@@ -290,8 +376,10 @@ export default function Home() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
+      stopProgressTimer();
       setIsProcessing(false);
       setProcessingProgress(0);
+      setElapsedSeconds(0);
     }
   };
 
@@ -314,7 +402,7 @@ export default function Home() {
             Schedule to Calendar
           </h1>
           <p className="text-base sm:text-lg md:text-xl text-gray-600 dark:text-gray-300 px-2">
-            Upload schedule screenshots and download or sync them to your calendar
+            Upload a work schedule or class timetable, as a PDF or image, and download or sync it to your calendar
           </p>
         </div>
 
@@ -425,7 +513,7 @@ export default function Home() {
                 {!canUseSelectedDestination && (
                   <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">
                     Connect your {destination === 'google' ? 'Google' : 'Outlook'} account
-                    before uploading images.
+                    before uploading files.
                   </p>
                 )}
               </div>
@@ -447,7 +535,7 @@ export default function Home() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept={ACCEPTED_FILE_TYPES}
                 multiple
                 onChange={handleFileInputChange}
                 disabled={!canUseSelectedDestination}
@@ -468,14 +556,14 @@ export default function Home() {
               </svg>
               <p className="text-base sm:text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
                 {canUseSelectedDestination
-                  ? 'Drag and drop your schedule images here'
+                  ? 'Drag and drop your schedule PDFs or images here'
                   : `Connect ${
                       destination === 'google' ? 'Google' : 'Outlook'
                     } before uploading`}
               </p>
               <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
                 {canUseSelectedDestination
-                  ? 'or tap to browse files (you can select multiple images)'
+                  ? `or tap to browse — PDF, JPEG, PNG, GIF, or WebP, up to ${MAX_FILE_MB}MB each. You can select multiple files.`
                   : 'Once connected, upload and sync will be enabled.'}
               </p>
             </div>
@@ -485,7 +573,7 @@ export default function Home() {
               <div className="space-y-3 sm:space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">
-                    Selected Images ({selectedFiles.length})
+                    Selected Files ({selectedFiles.length})
                   </h3>
                   <button
                     onClick={handleClearAll}
@@ -497,15 +585,24 @@ export default function Home() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
                   {selectedFiles.map((fileWithPreview) => (
                     <div key={fileWithPreview.id} className="relative group">
-                      <img
-                        src={fileWithPreview.preview}
-                        alt={`Preview: ${fileWithPreview.file.name}`}
-                        className="w-full rounded-lg border border-gray-200 dark:border-gray-700 max-h-48 sm:max-h-64 object-contain bg-gray-50 dark:bg-gray-900"
-                      />
+                      {fileWithPreview.preview ? (
+                        <img
+                          src={fileWithPreview.preview}
+                          alt={`Preview: ${fileWithPreview.file.name}`}
+                          className="w-full rounded-lg border border-gray-200 dark:border-gray-700 max-h-48 sm:max-h-64 object-contain bg-gray-50 dark:bg-gray-900"
+                        />
+                      ) : (
+                        <div className="flex h-48 sm:h-64 flex-col items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-red-600 dark:border-gray-700 dark:bg-gray-900 dark:text-red-400">
+                          <svg className="mb-3 h-14 w-14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 3h7l5 5v13H7V3zm7 0v5h5M9.5 14h5M9.5 17h5" />
+                          </svg>
+                          <span className="text-sm font-semibold">PDF document</span>
+                        </div>
+                      )}
                       <button
                         onClick={() => handleRemoveFile(fileWithPreview.id)}
                         className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 active:bg-red-700 text-white rounded-full p-2 sm:p-2.5 transition-colors opacity-100 sm:opacity-0 sm:group-hover:opacity-100 touch-manipulation min-w-[44px] min-h-[44px] flex items-center justify-center"
-                        aria-label="Remove image"
+                        aria-label="Remove file"
                       >
                         <svg
                           className="w-5 h-5"
@@ -534,13 +631,13 @@ export default function Home() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="image/*"
+                    accept={ACCEPTED_FILE_TYPES}
                     multiple
                     onChange={handleFileInputChange}
                     disabled={!canUseSelectedDestination}
                     className="hidden"
                   />
-                  + Add More Images
+                  + Add More Files
                 </button>
               </div>
 
@@ -551,7 +648,13 @@ export default function Home() {
                     Repeat schedule
                   </p>
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    Turn this on to repeat each extracted shift every week. Then choose when repeats should end.
+                    For a schedule that shows a single week, turn this on to repeat every
+                    extracted event weekly, then choose when repeats should end.
+                  </p>
+                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    If your file already spells out its own date range — like a term
+                    timetable that runs for several weeks — every week is created
+                    automatically and this setting is ignored for those events.
                   </p>
                 </div>
                 <label className="flex items-center space-x-3 cursor-pointer">
@@ -677,6 +780,7 @@ export default function Home() {
                     <span>
                       {destination === 'download' ? 'Analyzing schedules...' : 'Syncing schedules...'}{' '}
                       {processingProgress > 0 ? `${Math.round(processingProgress)}%` : ''}
+                      {elapsedSeconds > 0 ? ` · ${elapsedSeconds}s` : ''}
                     </span>
                   </>
                 ) : (
@@ -706,6 +810,13 @@ export default function Home() {
                   </>
                 )}
               </button>
+
+              {isProcessing && (
+                <p className="mt-3 text-center text-xs text-gray-500 dark:text-gray-400">
+                  Reading your schedule can take up to 3 minutes for a multi-page PDF.
+                  Keep this tab open.
+                </p>
+              )}
             </div>
           )}
 
@@ -732,7 +843,10 @@ export default function Home() {
               <ol className="space-y-2 sm:space-y-3 text-sm sm:text-base text-gray-600 dark:text-gray-300 mb-4 sm:mb-6">
                 <li className="flex items-start">
                   <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">1.</span>
-                  <span>Upload one or more clear screenshots of your work schedule</span>
+                  <span>
+                    Upload one or more clear PDFs or images of your work schedule or class
+                    timetable ({MAX_FILE_MB}MB max per file)
+                  </span>
                 </li>
                 <li className="flex items-start">
                   <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">2.</span>
@@ -765,7 +879,10 @@ export default function Home() {
               <ol className="space-y-2 sm:space-y-3 text-sm sm:text-base text-gray-600 dark:text-gray-300 mb-4 sm:mb-6">
                 <li className="flex items-start">
                   <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">1.</span>
-                  <span>Upload one or more clear screenshots of your work schedule</span>
+                  <span>
+                    Upload one or more clear PDFs or images of your work schedule or class
+                    timetable ({MAX_FILE_MB}MB max per file)
+                  </span>
                 </li>
                 <li className="flex items-start">
                   <span className="font-bold text-blue-600 dark:text-blue-400 mr-3">2.</span>

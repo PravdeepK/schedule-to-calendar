@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local test fixtures (may contain real institutional schedules)
+# both spellings listed: macOS is case-insensitive, Linux/CI is not
+testingFiles/
+testingfiles/

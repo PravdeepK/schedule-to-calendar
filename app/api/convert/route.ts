@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  extractEventsFromImages,
+  extractEventsFromFiles,
   generateCalendar,
   uniqueAndSortedEvents,
 } from '@/lib/schedule';
+import { validateUploads } from '@/lib/uploadLimits';
+
+// Extraction is slow by nature: a dense multi-page timetable can take ~3 minutes
+// of model time. Serverless hosts kill a function long before that on their default
+// timeout, so raise it explicitly. Vercel caps this at 60 on Hobby and 300 on Pro;
+// no effect on `next dev` or a long-lived Node server.
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,17 +22,22 @@ export async function POST(request: NextRequest) {
     }
 
     const formData = await request.formData();
-    const images = formData.getAll('images') as File[];
+    const files = formData.getAll('files') as File[];
     const format = formData.get('format') as 'outlook' | 'apple';
     const repeatWeekly = formData.get('repeatWeekly') === 'true';
     const repeatMode = (formData.get('repeatMode') as 'weeks' | 'date') || 'weeks';
     const repeatWeeks = repeatWeekly && repeatMode === 'weeks' ? parseInt(formData.get('repeatWeeks') as string) || 4 : undefined;
     const repeatUntilDate = repeatWeekly && repeatMode === 'date' ? formData.get('repeatUntilDate') as string : undefined;
     
-    if (!images || images.length === 0) {
-      return NextResponse.json({ error: 'No images provided' }, { status: 400 });
+    if (files.length === 0) {
+      return NextResponse.json({ error: 'No schedule files provided' }, { status: 400 });
     }
-    
+
+    const uploadError = validateUploads(files);
+    if (uploadError) {
+      return NextResponse.json({ error: uploadError }, { status: 400 });
+    }
+
     if (!format || (format !== 'outlook' && format !== 'apple')) {
       return NextResponse.json({ error: 'Invalid format. Must be "outlook" or "apple"' }, { status: 400 });
     }
@@ -45,12 +57,12 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    const { events: allEvents, errors } = await extractEventsFromImages(images);
+    const { events: allEvents, errors } = await extractEventsFromFiles(files);
     
     if (allEvents.length === 0) {
       const errorMsg = errors.length > 0 
-        ? `Failed to extract events from images. ${errors.join(' ')}`
-        : 'No schedule events found in any of the images. Please ensure the images are clear and contain readable work schedules.';
+        ? `Failed to extract events from files. ${errors.join(' ')}`
+        : 'No schedule events found. Please ensure the images or PDFs are clear and contain readable work schedules.';
       return NextResponse.json({ error: errorMsg }, { status: 400 });
     }
     
@@ -77,7 +89,7 @@ export async function POST(request: NextRequest) {
       { 
         error: error instanceof Error 
           ? error.message 
-          : 'Failed to process schedule. Please ensure the images are clear and contain readable schedule information.' 
+          : 'Failed to process schedule. Please ensure the images or PDFs are clear and contain readable schedule information.' 
       },
       { status: 500 }
     );
