@@ -45,9 +45,10 @@ const anthropic = new Anthropic({
  * correctly both times. A wrong end time is worse than a slow answer here — it
  * lands in someone's calendar looking correct.
  *
- * SCHEDULE_EXTRACTION_EFFORT overrides it. If you lower it, check the result
- * against the "Total Hours" figure printed on the page (see the prompt below);
- * that reconciliation is the first thing lower effort skimps on.
+ * SCHEDULE_EXTRACTION_EFFORT overrides it. Lowering it is now less dangerous
+ * than it was, since `analyzeUnit` verifies each page against the "Total Hours"
+ * figure printed on it and re-reads a page that disagrees — but that check only
+ * covers pages that print a total, so it is a safety net, not a licence.
  */
 const EXTRACTION_EFFORT = (process.env.SCHEDULE_EXTRACTION_EFFORT ||
   'high') as 'low' | 'medium' | 'high';
@@ -294,7 +295,70 @@ async function buildAnalysisUnits(file: File): Promise<AnalysisUnit[]> {
   }));
 }
 
-async function analyzeUnit(unit: AnalysisUnit): Promise<ScheduleEvent[]> {
+/**
+ * Parses a printed "Total Hours" figure into minutes.
+ *
+ * Accepts the `HH:MM` form these headers normally use, and a plain or decimal
+ * number of hours as a fallback. Returns null for anything else, including the
+ * common case of a page that prints no such figure — a null means "nothing to
+ * check against", never "zero hours".
+ */
+export function parseTotalHoursMinutes(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return Math.round(value * 60);
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  const clock = trimmed.match(/^(\d+):([0-5]\d)$/);
+  if (clock) {
+    return parseInt(clock[1], 10) * 60 + parseInt(clock[2], 10);
+  }
+
+  const decimal = trimmed.match(/^(\d+(?:\.\d+)?)$/);
+  if (decimal) {
+    return Math.round(parseFloat(decimal[1]) * 60);
+  }
+
+  return null;
+}
+
+/**
+ * Total duration of `events` in minutes, counting each event once. Must be
+ * called before `expandDocumentRecurrence`, since the printed figure covers one
+ * week — summing expanded occurrences would multiply it by the term length.
+ */
+export function sumEventMinutes(events: ScheduleEvent[]): number {
+  return events.reduce((total, event) => {
+    const minutes = (event.end.getTime() - event.start.getTime()) / 60000;
+    return total + (minutes > 0 ? minutes : 0);
+  }, 0);
+}
+
+/** One extraction attempt, before recurrence expansion. */
+interface UnitAttempt {
+  events: ScheduleEvent[];
+  /** From the page header, or null when the page prints no total. */
+  declaredMinutes: number | null;
+  /** Sum of the durations this attempt actually extracted. */
+  sumMinutes: number;
+}
+
+/**
+ * How many times a page may be re-read when its extracted hours disagree with
+ * the total printed on it. Each retry is another full model request, so this
+ * trades latency on a page that is probably wrong against shipping a calendar
+ * that is quietly wrong. Only pages that print a total and fail the check are
+ * ever retried, so a shift schedule or a photo never pays this cost.
+ */
+const VERIFY_ATTEMPTS = Math.max(
+  1,
+  Number(process.env.SCHEDULE_VERIFY_ATTEMPTS) || 2
+);
+
+async function analyzeUnitOnce(unit: AnalysisUnit): Promise<UnitAttempt> {
   const fileContent = unit.content;
 
   const stream = anthropic.messages.stream({
@@ -316,6 +380,7 @@ async function analyzeUnit(unit: AnalysisUnit): Promise<ScheduleEvent[]> {
             text: `Analyze this schedule image or PDF document and extract every scheduled event. It may be a work shift schedule (a list of shifts on specific dates) or an academic/class timetable (a weekly grid of blocks that repeat over a term). Return a JSON object with an "events" array in this exact format:
 
 {
+  "totalHours": "The \"Total Hours\" figure printed in the page header, copied exactly as shown (e.g. \"18:00\"), or null if the page does not print one",
   "events": [
     {
       "start": "ISO 8601 datetime string without timezone (e.g., 2026-01-10T15:00:00)",
@@ -343,6 +408,11 @@ Weekly grid timetables (very important):
 - Emit one event per block per page. You may be given a single page taken from a longer document, or the whole document - either way, process every page you are shown and emit the blocks on it. The same block often recurs across pages under different page date ranges; duplicates are removed later, so never skip a block because it looks like one you have already seen.
 - If a block genuinely occurs only once (its overlap covers a single week), omit "repeatUntil".
 - CRITICAL: do NOT list every weekly occurrence separately. A block covering 13 weeks is ONE event with "repeatUntil" set, never 13 events. The weekly occurrences are generated automatically from "repeatUntil" after you respond. A typical 4-page timetable should produce well under 40 events in total; if you are writing more than that, you are enumerating occurrences instead of collapsing them into "repeatUntil".
+
+Checking your work (this is verified after you answer):
+- Many timetable pages print a "Total Hours" figure in the header. It is the sum of the durations of every block on that page, counted once each for a single week.
+- Copy that figure into "totalHours" exactly as printed. Do not compute it yourself, do not round it, and do not adjust it to match what you read. If the page prints no such figure, use null.
+- Before answering, add up the durations of the blocks you extracted, counting each block once rather than once per week. If your sum does not equal the printed figure, you have misread at least one block edge - the BOTTOM edge is the most commonly misread part. Trace each block's bottom edge horizontally to the hour scale and correct it. Do not invent or drop blocks to force the sum to agree.
 
 Titles and locations:
 - If a block shows a course code and a course name, combine them, e.g. "USUS112 - Ultrasound Scanning". Put any section/offering code in the description.
@@ -390,21 +460,88 @@ Inclusion rules:
   }
 
   let eventsData;
+  let declaredMinutes: number | null = null;
   try {
     const jsonMatch = content.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
     const jsonText = jsonMatch ? jsonMatch[1] : content.trim();
     const parsed = JSON.parse(jsonText);
     eventsData = Array.isArray(parsed) ? parsed : parsed.events || parsed.data || [];
+    declaredMinutes = Array.isArray(parsed)
+      ? null
+      : parseTotalHoursMinutes(parsed.totalHours);
   } catch (err) {
     console.error('JSON parsing error:', err, 'Content:', content);
     throw new Error('Failed to parse AI response');
   }
 
   if (!Array.isArray(eventsData)) {
-    return [];
+    return { events: [], declaredMinutes: null, sumMinutes: 0 };
   }
 
-  return expandDocumentRecurrence(parseEventsFromJSON(eventsData));
+  const events = parseEventsFromJSON(eventsData);
+  return { events, declaredMinutes, sumMinutes: sumEventMinutes(events) };
+}
+
+function describeHours(minutes: number): string {
+  const whole = Math.floor(minutes / 60);
+  const rest = Math.round(minutes % 60);
+  return `${whole}:${String(rest).padStart(2, '0')}`;
+}
+
+/**
+ * Reads one page, checking the result against the hours the page itself claims.
+ *
+ * Extraction is not deterministic: repeated runs over the same timetable have
+ * returned different block end times, and a wrong end time is worse than a slow
+ * answer because it lands in a calendar looking correct. A page that prints its
+ * own "Total Hours" carries the answer key, so a mismatch is proof of a misread
+ * and is worth spending another request to correct.
+ *
+ * A page with no printed total is accepted as-is — there is nothing to check it
+ * against, and rejecting it would break every shift schedule and photo. When no
+ * attempt reconciles, the closest one is used and a warning is returned rather
+ * than failing the upload, since a slightly wrong calendar still beats none.
+ */
+async function analyzeUnit(
+  unit: AnalysisUnit
+): Promise<{ events: ScheduleEvent[]; warning?: string }> {
+  let best: UnitAttempt | null = null;
+
+  for (let attempt = 1; attempt <= VERIFY_ATTEMPTS; attempt += 1) {
+    const result = await analyzeUnitOnce(unit);
+
+    if (result.declaredMinutes === null || result.sumMinutes === result.declaredMinutes) {
+      return { events: expandDocumentRecurrence(result.events) };
+    }
+
+    const drift = Math.abs(result.sumMinutes - result.declaredMinutes);
+    const bestDrift =
+      best === null
+        ? Infinity
+        : Math.abs(best.sumMinutes - (best.declaredMinutes ?? 0));
+    if (drift < bestDrift) {
+      best = result;
+    }
+
+    console.warn(
+      `${unit.label}: extracted ${describeHours(result.sumMinutes)} but the page ` +
+        `prints ${describeHours(result.declaredMinutes)} (attempt ${attempt} of ${VERIFY_ATTEMPTS})`
+    );
+  }
+
+  // Unreachable in practice: the loop runs at least once and only falls through
+  // when every attempt mismatched, which is exactly when `best` is set.
+  if (best === null) {
+    return { events: [] };
+  }
+
+  return {
+    events: expandDocumentRecurrence(best.events),
+    warning:
+      `${unit.label}: times may be misread — extracted ` +
+      `${describeHours(best.sumMinutes)} against the ${describeHours(best.declaredMinutes ?? 0)} ` +
+      `printed on the page. Check this page's events after importing.`,
+  };
 }
 
 /**
@@ -448,9 +585,12 @@ async function mapWithConcurrency<T, R>(
 export async function extractEventsFromFiles(files: File[]): Promise<{
   events: ScheduleEvent[];
   errors: string[];
+  /** Pages that produced events but failed their own printed-hours check. */
+  warnings: string[];
 }> {
   const allEvents: ScheduleEvent[] = [];
   const errors: string[] = [];
+  const warnings: string[] = [];
 
   // Flatten every file into pages first, so pages from different uploads share
   // the same concurrency budget instead of each file waiting its turn.
@@ -469,7 +609,10 @@ export async function extractEventsFromFiles(files: File[]): Promise<{
 
   settled.forEach((result, index) => {
     if (result.status === 'fulfilled') {
-      allEvents.push(...result.value);
+      allEvents.push(...result.value.events);
+      if (result.value.warning) {
+        warnings.push(result.value.warning);
+      }
       return;
     }
     const message =
@@ -478,7 +621,7 @@ export async function extractEventsFromFiles(files: File[]): Promise<{
     console.error(`Error processing ${units[index].label}:`, result.reason);
   });
 
-  return { events: allEvents, errors };
+  return { events: allEvents, errors, warnings };
 }
 
 function formatICSDateTime(date: Date): string {
