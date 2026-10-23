@@ -13,9 +13,9 @@
     "@anthropic-ai/sdk": "^0.79.0",
     "ical-generator": "^10.0.0",
     "mupdf": "^1.28.0",
-    "next": "16.1.1",
-    "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "next": "^16.4.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -23,7 +23,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.1.1",
+    "eslint-config-next": "^16.4.2",
     "tailwindcss": "^4",
     "tsx": "^4.23.1",
     "typescript": "^5"
